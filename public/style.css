@@ -313,9 +313,65 @@ body{
   flex-shrink:0;
 }
 .message--self .message__avatar{ background: linear-gradient(135deg, var(--accent), #FF7A50) }
-.message__meta{ display:flex; flex-direction:column; line-height:1.1 }
+.message__meta{ display:flex; flex-direction:column; line-height:1.1; flex:1; min-width:0 }
 .message__author{ font-size:13px; font-weight:600; color: var(--text) }
 .message__time{ font-family:var(--mono); font-size:11px; color: var(--faint); margin-top:2px }
+.message__actions{ display:flex; gap:6px; opacity:0; transition:opacity 0.15s; margin-left:auto }
+.message:hover .message__actions{ opacity:1 }
+.message__actions:focus-within{ opacity:1 }
+.mini-btn{
+  width:28px; height:28px; border-radius:8px;
+  background: var(--surface-3); border:1px solid var(--line);
+  color: var(--muted); cursor:pointer; font-size:14px; line-height:1;
+  display:grid; place-items:center;
+}
+.mini-btn:hover{ color: var(--text); border-color: rgba(255,255,255,0.15) }
+.message__reply{
+  margin: 8px 14px 0 52px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent-2);
+  background: rgba(46,196,182,0.07);
+  border-radius: 0 8px 8px 0;
+  cursor:pointer;
+  display:flex; flex-direction:column; gap:2px;
+  max-width: calc(100% - 66px);
+}
+.message--self .message__reply{ border-left-color: var(--accent); background: rgba(255,90,60,0.08); margin-left:14px; }
+.message__reply-user{ font-family:var(--mono); font-size:11px; color: var(--accent-2); font-weight:600 }
+.message--self .message__reply-user{ color: var(--accent) }
+.message__reply-text{ font-size:12px; color: var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.message--flash{ outline:2px solid var(--accent-2); outline-offset:2px; }
+.message__reactions{ display:flex; flex-wrap:wrap; gap:6px; padding: 0 14px 10px 52px; }
+.message__reactions:empty{ display:none; padding:0; }
+.message--self .message__reactions{ justify-content:flex-end; padding-left:14px; }
+.reaction-pill{
+  display:inline-flex; align-items:center; gap:5px;
+  background: var(--surface-3); border:1px solid var(--line);
+  color: var(--text); font-size:13px;
+  padding: 3px 8px; border-radius:999px; cursor:pointer;
+}
+.reaction-pill:hover{ border-color: rgba(255,255,255,0.2) }
+.reaction-pill--mine{ border-color: rgba(255,90,60,0.4); background: rgba(255,90,60,0.12) }
+.reaction-pill__count{ font-family:var(--mono); font-size:11px; color: var(--muted) }
+.reaction-picker{
+  display:flex; gap:4px; padding: 6px 14px 10px 52px; flex-wrap:wrap;
+}
+.reaction-option{
+  width:32px; height:32px; border-radius:8px; font-size:18px;
+  background: var(--surface-3); border:1px solid var(--line); cursor:pointer;
+}
+.reaction-option:hover{ transform:scale(1.1); border-color: var(--accent-2) }
+.reply-preview{
+  display:flex; align-items:center; gap:10px;
+  margin: 0 16px; padding: 10px 12px;
+  background: var(--surface-2); border:1px solid var(--line);
+  border-bottom:none; border-radius:12px 12px 0 0;
+}
+.reply-preview__bar{ width:3px; align-self:stretch; background: var(--accent-2); border-radius:2px; }
+.reply-preview__content{ flex:1; display:flex; flex-direction:column; min-width:0 }
+.reply-preview__label{ font-size:12px; color: var(--muted) }
+.reply-preview__label strong{ color: var(--text) }
+.reply-preview__snippet{ font-size:12px; color: var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .message__body{
   padding: 8px 14px 12px 52px;
   font-size:14px; line-height:1.55; color:#D6DEE8;

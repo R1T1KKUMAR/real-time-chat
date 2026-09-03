@@ -34,6 +34,10 @@ const imagePreview = document.getElementById('image-preview');
 const previewImg = document.getElementById('preview-img');
 const previewName = document.getElementById('preview-name');
 const clearImageBtn = document.getElementById('clear-image');
+const replyPreview = document.getElementById('reply-preview');
+const replyToUser = document.getElementById('reply-to-user');
+const replyToSnippet = document.getElementById('reply-to-snippet');
+const clearReplyBtn = document.getElementById('clear-reply');
 
 let username = '';
 let sessionId = '';
@@ -42,7 +46,9 @@ let messageCount = 0;
 let typingTimeout = null;
 let isTyping = false;
 let pendingImage = null; // { dataUrl, name }
+let pendingReply = null; // { id, username, snippet }
 const typingUsers = new Set();
+const ALLOWED_REACTIONS = ['❤️', '😂', '👍', '🎉', '😮', '😢'];
 
 const STORAGE_USER = 'signal_username';
 const STORAGE_SESSION = 'signal_session';
@@ -184,10 +190,38 @@ if(copyLinkBtn){
 document.addEventListener('keydown', (e)=>{
   if(e.key==='/' && !joined) return;
   if(e.key==='/' && document.activeElement!==input){ e.preventDefault(); if(joined) input.focus(); }
-  if(e.key==='Escape'){ input.value=''; charCount.textContent='0 / 500'; if(isTyping){ isTyping=false; socket.emit('stop typing'); } typingIndicator.textContent=''; }
+  if(e.key==='Escape'){
+    if(pendingReply){ clearPendingReply(); return; }
+    if(pendingImage){ clearPendingImage(); return; }
+    input.value=''; charCount.textContent='0 / 500'; if(isTyping){ isTyping=false; socket.emit('stop typing'); } typingIndicator.textContent='';
+  }
 });
+document.addEventListener('click', ()=>{
+  document.querySelectorAll('.reaction-picker').forEach(p=>p.style.display='none');
+});
+if(clearReplyBtn) clearReplyBtn.addEventListener('click', clearPendingReply);
 
 // Rendering
+function renderReactions(container, reactions, messageId){
+  container.innerHTML='';
+  if(!reactions) return;
+  const entries=Object.entries(reactions).filter(([,users])=>Array.isArray(users)&&users.length>0);
+  if(entries.length===0) return;
+  entries.forEach(([emoji, users])=>{
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='reaction-pill'+(users.includes(username)?' reaction-pill--mine':'');
+    btn.title=users.join(', ');
+    const eSpan=document.createElement('span');
+    eSpan.textContent=emoji;
+    const cSpan=document.createElement('span');
+    cSpan.className='reaction-pill__count';
+    cSpan.textContent=users.length;
+    btn.appendChild(eSpan); btn.appendChild(cSpan);
+    btn.addEventListener('click', (ev)=>{ ev.stopPropagation(); socket.emit('toggle reaction', { messageId, emoji }); });
+    container.appendChild(btn);
+  });
+}
 function addChatMessage(data,isSelf){
   if(data.id){ const safe=data.id.replace(/"/g,'\\"'); if(messagesEl.querySelector(`[data-id="${safe}"]`)) return; }
   messageCount++; msgCountEl.textContent=`${messageCount} message${messageCount!==1?'s':''}`; updateEmptyState();
@@ -196,6 +230,7 @@ function addChatMessage(data,isSelf){
   if(data.id) li.dataset.id=data.id;
   const time=formatTime(data.timestamp);
   const isImage = data.type==='image' && typeof data.image==='string' && data.image.startsWith('data:image/');
+  const hasReply = data.replyTo && typeof data.replyTo.id==='string';
   li.innerHTML=`
     <div class="message__bar"></div>
     <div class="message__head">
@@ -204,12 +239,27 @@ function addChatMessage(data,isSelf){
         <span class="message__author"></span>
         <span class="message__time"></span>
       </div>
+      <div class="message__actions">
+        <button class="mini-btn" data-act="react" title="React">☺</button>
+        <button class="mini-btn" data-act="reply" title="Reply">↩</button>
+      </div>
     </div>
+    ${hasReply ? `<div class="message__reply"><span class="message__reply-user"></span><span class="message__reply-text"></span></div>` : ``}
     ${isImage ? `<img class="message__image" alt="shared image" loading="lazy" />` : `<div class="message__body"></div>`}
     ${isImage && data.message ? `<div class="message__image-caption"></div>` : ``}
+    <div class="message__reactions"></div>
+    <div class="reaction-picker" style="display:none"></div>
   `;
   li.querySelector('.message__author').textContent=data.username;
   li.querySelector('.message__time').textContent=time;
+  if(hasReply){
+    li.querySelector('.message__reply-user').textContent='@'+data.replyTo.username;
+    li.querySelector('.message__reply-text').textContent=data.replyTo.snippet||'';
+    li.querySelector('.message__reply').addEventListener('click', ()=>{
+      const target=messagesEl.querySelector(`[data-id="${data.replyTo.id.replace(/"/g,'\\"')}"]`);
+      if(target){ target.scrollIntoView({behavior:'smooth', block:'center'}); target.classList.add('message--flash'); setTimeout(()=>target.classList.remove('message--flash'),1200); }
+    });
+  }
   if(isImage){
     const img=li.querySelector('.message__image');
     img.src=data.image;
@@ -220,9 +270,49 @@ function addChatMessage(data,isSelf){
   } else {
     li.querySelector('.message__body').textContent=data.message||'';
   }
+  // reactions
+  const reactBox=li.querySelector('.message__reactions');
+  renderReactions(reactBox, data.reactions, data.id);
+  // picker
+  const picker=li.querySelector('.reaction-picker');
+  ALLOWED_REACTIONS.forEach(em=>{
+    const b=document.createElement('button');
+    b.type='button'; b.className='reaction-option'; b.textContent=em;
+    b.addEventListener('click', (ev)=>{ ev.stopPropagation(); socket.emit('toggle reaction', { messageId: data.id, emoji: em }); picker.style.display='none'; });
+    picker.appendChild(b);
+  });
+  const reactBtn=li.querySelector('[data-act="react"]');
+  const replyBtn=li.querySelector('[data-act="reply"]');
+  reactBtn.addEventListener('click', (ev)=>{ ev.stopPropagation(); picker.style.display=picker.style.display==='none'?'flex':'none'; });
+  replyBtn.addEventListener('click', (ev)=>{ ev.stopPropagation(); setPendingReply({ id: data.id, username: data.username, snippet: (data.type==='image' ? (data.message||'[image]') : (data.message||'')).slice(0,120) }); });
   messagesEl.appendChild(li);
   scrollToBottom();
 }
+function updateMessageInPlace(data){
+  if(!data || !data.id) return;
+  if(data.sessionId && sessionId && data.sessionId!==sessionId) return;
+  const safe=data.id.replace(/"/g,'\\"');
+  const li=messagesEl.querySelector(`[data-id="${safe}"]`);
+  if(!li) {
+    // if missed (e.g. history gap), append as new
+    addChatMessage(data, data.username===username);
+    return;
+  }
+  const box=li.querySelector('.message__reactions');
+  if(box) renderReactions(box, data.reactions, data.id);
+}
+function setPendingReply(ref){
+  pendingReply=ref||null;
+  if(!ref){
+    if(replyPreview) replyPreview.style.display='none';
+    return;
+  }
+  if(replyToUser) replyToUser.textContent=ref.username;
+  if(replyToSnippet) replyToSnippet.textContent=ref.snippet||'';
+  if(replyPreview) replyPreview.style.display='flex';
+  input.focus();
+}
+function clearPendingReply(){ setPendingReply(null); }
 function addSystemMessage(text,variant=''){
   messageCount++; msgCountEl.textContent=`${messageCount} message${messageCount!==1?'s':''}`; updateEmptyState();
   const li=document.createElement('li');
@@ -312,6 +402,9 @@ socket.on('chat message', (data)=>{
   addChatMessage(data,isSelf);
   if(!isSelf && typingUsers.has(data.username)){ typingUsers.delete(data.username); renderTyping(); }
 });
+socket.on('message updated', (data)=>{
+  updateMessageInPlace(data);
+});
 socket.on('user joined', (data)=>{
   if(data.sessionId && sessionId && data.sessionId!==sessionId) return;
   addSystemMessage(`${data.username} joined ${data.sessionId}`, 'system-pill--join');
@@ -379,12 +472,15 @@ form.addEventListener('submit', (e)=>{
   if(!val && !hasImage) return;
   if(!joined){ formHint.textContent='Create or join a session first'; return; }
   if(val.length>500){ formHint.textContent='Message too long (max 500)'; return; }
+  const replyToId = pendingReply ? pendingReply.id : null;
   if(hasImage){
-    socket.emit('chat image', { image: pendingImage.dataUrl, caption: val });
+    socket.emit('chat image', { image: pendingImage.dataUrl, caption: val, replyToId });
     clearPendingImage();
   } else {
-    socket.emit('chat message', val);
+    if(replyToId) socket.emit('chat message', { message: val, replyToId });
+    else socket.emit('chat message', val);
   }
+  clearPendingReply();
   input.value=''; charCount.textContent='0 / 500';
   if(isTyping){ isTyping=false; clearTimeout(typingTimeout); socket.emit('stop typing'); }
   input.focus();

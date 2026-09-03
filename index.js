@@ -75,6 +75,23 @@ function isValidImage(dataUrl) {
   if (!/^data:image\/(png|jpeg|jpg|gif|webp);base64,/.test(dataUrl)) return false;
   return true;
 }
+const ALLOWED_REACTIONS = ['❤️', '😂', '👍', '🎉', '😮', '😢'];
+function findMessage(sess, id) {
+  if (!id || typeof id !== 'string') return null;
+  return sess.history.find(m => m.id === id) || null;
+}
+function buildReplyRef(sess, replyToId) {
+  if (!replyToId || typeof replyToId !== 'string') return null;
+  const target = findMessage(sess, replyToId);
+  if (!target) return null;
+  const snippetSrc = target.type === 'image' ? (target.message || '[image]') : (target.message || '');
+  return {
+    id: target.id,
+    username: target.username,
+    snippet: String(snippetSrc).slice(0, 120),
+    type: target.type || 'text',
+  };
+}
 function getUsersList(session) {
   return Array.from(session.users.values()).map(u => u.username).sort((a, b) => a.localeCompare(b));
 }
@@ -232,7 +249,16 @@ io.on('connection', (socket) => {
       socket.emit('chat error', 'Join a session before sending messages');
       return;
     }
-    if (!isValidMessage(rawMsg)) {
+    // backward compat: string OR { message, replyToId }
+    let text = '';
+    let replyToId = null;
+    if (typeof rawMsg === 'string') {
+      text = rawMsg;
+    } else if (rawMsg && typeof rawMsg === 'object') {
+      text = typeof rawMsg.message === 'string' ? rawMsg.message : '';
+      replyToId = typeof rawMsg.replyToId === 'string' ? rawMsg.replyToId : null;
+    }
+    if (!isValidMessage(text)) {
       socket.emit('chat error', 'Message must be 1–500 characters');
       return;
     }
@@ -251,7 +277,7 @@ io.on('connection', (socket) => {
     }
     socket._msgTimestamps.push(now);
 
-    const message = rawMsg.trim();
+    const message = text.trim();
     const payload = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}-${socket.id.slice(0, 4)}`,
       username: socket.username,
@@ -259,6 +285,8 @@ io.on('connection', (socket) => {
       type: 'text',
       timestamp: new Date().toISOString(),
       sessionId: socket.sessionId,
+      replyTo: buildReplyRef(sess, replyToId),
+      reactions: {},
     };
     pushHistory(sess, payload);
     io.to(socket.sessionId).emit('chat message', payload);
@@ -271,6 +299,7 @@ io.on('connection', (socket) => {
     }
     const image = data && typeof data.image === 'string' ? data.image : '';
     const caption = data && typeof data.caption === 'string' ? data.caption.trim().slice(0, 200) : '';
+    const replyToId = data && typeof data.replyToId === 'string' ? data.replyToId : null;
     if (!isValidImage(image)) {
       socket.emit('chat error', 'Invalid image — use PNG/JPEG/GIF/WEBP under ~1.5MB');
       return;
@@ -298,9 +327,46 @@ io.on('connection', (socket) => {
       type: 'image',
       timestamp: new Date().toISOString(),
       sessionId: socket.sessionId,
+      replyTo: buildReplyRef(sess, replyToId),
+      reactions: {},
     };
     pushHistory(sess, payload);
     io.to(socket.sessionId).emit('chat message', payload);
+  });
+
+  socket.on('toggle reaction', (data) => {
+    if (!socket.username || !socket.sessionId) {
+      socket.emit('chat error', 'Join a session before reacting');
+      return;
+    }
+    const messageId = data && typeof data.messageId === 'string' ? data.messageId : '';
+    const emoji = data && typeof data.emoji === 'string' ? data.emoji : '';
+    if (!ALLOWED_REACTIONS.includes(emoji)) {
+      socket.emit('chat error', 'Invalid reaction');
+      return;
+    }
+    const sess = sessions.get(socket.sessionId);
+    if (!sess) {
+      socket.emit('chat error', 'Session not found');
+      return;
+    }
+    const msg = findMessage(sess, messageId);
+    if (!msg) {
+      socket.emit('chat error', 'Message not found');
+      return;
+    }
+    msg.reactions = msg.reactions || {};
+    const users = msg.reactions[emoji] || [];
+    const idx = users.indexOf(socket.username);
+    if (idx >= 0) {
+      users.splice(idx, 1);
+      if (users.length === 0) delete msg.reactions[emoji];
+      else msg.reactions[emoji] = users;
+    } else {
+      // one reaction per user per message? No — allow multiple emojis but toggle per emoji
+      msg.reactions[emoji] = [...users, socket.username];
+    }
+    io.to(socket.sessionId).emit('message updated', msg);
   });
 
   socket.on('typing', () => {
