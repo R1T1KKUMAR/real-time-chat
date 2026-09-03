@@ -115,7 +115,7 @@ function validateSessionId(val){
   return '';
 }
 function showJoinError(msg){ joinError.textContent=msg||''; usernameInput.style.borderColor=msg?'#EF4444':''; }
-function showSessionError(msg){ sessionError.textContent=msg||''; sessionInput.style.borderColor=msg?'#EF4444':''; }
+function showSessionError(msg){ sessionError.textContent=msg||''; sessionInput.style.borderColor=msg?'#EF4444':''; if(!msg) sessionError.style.color=''; }
 
 // Prefill from URL ?session=ID
 (function(){
@@ -234,16 +234,18 @@ function renderTyping(){
   typingIndicator.innerHTML=`${sanitize(text)}<span class="typing__dots"><i></i><i></i><i></i></span>`;
 }
 
-// Auto-rejoin on connect if stored
+// Auto-rejoin on connect if stored — URL ?session= takes priority over stored
 function tryAutoRejoin(){
-  const {user, sess}=getStored();
-  if(user && sess && !joined){
-    usernameInput.value=user; sessionInput.value=sess;
+  const {user, sess:storedSess}=getStored();
+  let urlSess='';
+  try{ urlSess=new URLSearchParams(window.location.search).get('session')?.trim().toUpperCase()||''; }catch{}
+  const targetSess = urlSess || storedSess;
+  if(user && targetSess && !joined){
+    usernameInput.value=user; sessionInput.value=targetSess;
     showJoinError(''); showSessionError('');
-    socket.emit('join session', { username:user, sessionId:sess });
-    sessionError.textContent=`Reconnecting to ${sess} as ${user}…`; sessionError.style.color='#8A9BB0';
+    socket.emit('join session', { username:user, sessionId:targetSess });
+    sessionError.textContent=`Reconnecting to ${targetSess} as ${user}…`; sessionError.style.color='#8A9BB0';
   } else if(user && !joined && sessionInput.value.trim()){
-    // has user + session input from URL
     showJoinError(''); socket.emit('join session', { username:user, sessionId:sessionInput.value.trim().toUpperCase() });
   }
 }

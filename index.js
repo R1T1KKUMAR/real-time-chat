@@ -166,22 +166,32 @@ io.on('connection', (socket) => {
   const general = sessions.get('general');
   if (general) socket.emit('users update', { users: getUsersList(general), count: general.users.size, sessionId: 'general' });
 
-  socket.on('create session', ({ username }) => {
-    const name = typeof username === 'string' ? username.trim() : '';
-    if (!isValidUsername(name)) {
+  socket.on('create session', (data) => {
+    const username = data && typeof data.username === 'string' ? data.username.trim() : '';
+    if (!isValidUsername(username)) {
       socket.emit('username error', 'Username must be 2–20 chars, letters/numbers/_ - . only');
       return;
     }
+    // per-socket rate limit: max 3 creates per 10s
+    const now = Date.now();
+    socket._createStamps = socket._createStamps || [];
+    socket._createStamps = socket._createStamps.filter(t => now - t < 10000);
+    if (socket._createStamps.length >= 3) {
+      socket.emit('session error', 'Too many session creates — wait a moment');
+      return;
+    }
+    socket._createStamps.push(now);
     const sessionId = generateSessionId();
-    getOrCreateSession(sessionId); // ensure entry
-    const ok = joinSession(socket, name, sessionId);
+    getOrCreateSession(sessionId);
+    const ok = joinSession(socket, username, sessionId);
     if (ok) socket.emit('session created', { sessionId });
   });
 
-  socket.on('join session', ({ username, sessionId }) => {
-    const name = typeof username === 'string' ? username.trim() : '';
-    const sid = typeof sessionId === 'string' ? sessionId.trim().toUpperCase() : '';
-    if (!isValidUsername(name)) {
+  socket.on('join session', (data) => {
+    const username = data && typeof data.username === 'string' ? data.username.trim() : '';
+    const sessionIdRaw = data && typeof data.sessionId === 'string' ? data.sessionId : '';
+    const sid = sessionIdRaw.trim().toUpperCase();
+    if (!isValidUsername(username)) {
       socket.emit('username error', 'Username must be 2–20 chars, letters/numbers/_ - . only');
       return;
     }
@@ -193,7 +203,7 @@ io.on('connection', (socket) => {
       socket.emit('session error', `Session "${sid}" not found — create a new one`);
       return;
     }
-    joinSession(socket, name, sid);
+    joinSession(socket, username, sid);
   });
 
   // backward compat: old clients using set username -> join general
@@ -221,9 +231,19 @@ io.on('connection', (socket) => {
       socket.emit('chat error', 'Session not found');
       return;
     }
+    // simple spam throttle: max 5 msgs per second
+    const now = Date.now();
+    socket._msgTimestamps = socket._msgTimestamps || [];
+    socket._msgTimestamps = socket._msgTimestamps.filter(t => now - t < 1000);
+    if (socket._msgTimestamps.length >= 5) {
+      socket.emit('chat error', 'Slow down — too many messages');
+      return;
+    }
+    socket._msgTimestamps.push(now);
+
     const message = rawMsg.trim();
     const payload = {
-      id: `${Date.now()}-${socket.id.slice(0, 6)}`,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}-${socket.id.slice(0, 4)}`,
       username: socket.username,
       message,
       timestamp: new Date().toISOString(),
@@ -262,9 +282,21 @@ io.on('connection', (socket) => {
       });
       broadcastUsers(sessionId);
       console.log(`[leave] ${username} from ${sessionId} grace expired`);
-      // optional: cleanup empty non-general sessions after 1h? keep for now to allow history
-      if (sess.users.size === 0 && sessionId !== 'general' && sess.history.length === 0) {
-        // keep at least 10min for history, but if empty we could delete
+      // cleanup empty non-general sessions after grace (keep history 10min)
+      if (sess.users.size === 0 && sess.pendingLeaves.size === 0 && sessionId !== 'general') {
+        if (sess.history.length === 0) {
+          sessions.delete(sessionId);
+          console.log(`[session] deleted empty ${sessionId}`);
+        } else {
+          // keep history for 10min then delete
+          setTimeout(() => {
+            const s = sessions.get(sessionId);
+            if (s && s.users.size === 0 && s.pendingLeaves.size === 0) {
+              sessions.delete(sessionId);
+              console.log(`[session] expired ${sessionId} (history)`);
+            }
+          }, 10 * 60 * 1000);
+        }
       }
     }, 3500);
     sess.pendingLeaves.set(lower, { timeout, username, oldSocketId: socket.id });
