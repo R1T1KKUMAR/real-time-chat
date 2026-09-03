@@ -96,8 +96,17 @@
         </div>
       </div>
 
+      <div id="image-preview" class="image-preview" style="display:none">
+        <img id="preview-img" alt="preview" />
+        <button id="clear-image" type="button" class="image-preview__clear" aria-label="Remove image">✕</button>
+        <span id="preview-name"></span>
+      </div>
       <form id="form" class="composer" autocomplete="off">
         <div class="composer__field">
+          <label class="composer__attach" for="image-input" title="Send image (PNG/JPEG/GIF/WEBP ≤1.5MB)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <input id="image-input" type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" hidden />
+          </label>
           <span class="composer__prefix" id="composer-prefix">—</span>
           <input id="input" type="text" maxlength="500" placeholder="Transmit a message…" autocomplete="off" />
           <span class="composer__count" id="char-count">0 / 500</span>

@@ -439,6 +439,53 @@ body{
 .composer__send:hover{ filter:brightness(1.05) }
 .composer__send:active{ transform:translateY(1px) }
 .composer__send:disabled{ opacity:0.5; cursor:not-allowed; box-shadow:none }
+.composer__attach{
+  width:36px; height:36px; border-radius:10px;
+  display:grid; place-items:center;
+  background: var(--surface-3);
+  border:1px solid var(--line);
+  color: var(--muted);
+  cursor:pointer;
+  flex-shrink:0;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.composer__attach:hover{ color: var(--accent-2); border-color: rgba(46,196,182,0.3); background: rgba(46,196,182,0.08) }
+.image-preview{
+  display:flex; align-items:center; gap:10px;
+  margin: 0 16px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border:1px solid var(--line);
+  border-bottom:none;
+  border-radius:12px 12px 0 0;
+}
+.image-preview img{ width:48px; height:48px; object-fit:cover; border-radius:8px; border:1px solid var(--line) }
+.image-preview span{ font-family:var(--mono); font-size:11px; color: var(--muted); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.image-preview__clear{
+  width:28px; height:28px; border-radius:8px;
+  background: var(--surface-3); border:1px solid var(--line);
+  color: var(--muted); cursor:pointer; display:grid; place-items:center;
+}
+.image-preview__clear:hover{ color: #F87171; border-color: rgba(248,113,113,0.3) }
+.message__image{
+  display:block;
+  max-width: 320px;
+  max-height: 320px;
+  width:auto; height:auto;
+  border-radius:10px;
+  border:1px solid var(--line);
+  margin: 8px 14px 4px 52px;
+  cursor: zoom-in;
+  object-fit: contain;
+  background: #0B0F16;
+}
+.message--self .message__image{ margin-left:auto; margin-right:14px; border-color: rgba(255,90,60,0.2) }
+.message__image-caption{
+  padding: 0 14px 10px 52px;
+  font-size:13px; color: var(--muted);
+  white-space:pre-wrap; word-break:break-word;
+}
+.message--self .message__image-caption{ text-align:right; padding-left:14px; }
 .composer__hint{
   margin:0; padding: 0 16px 12px;
   font-family:var(--mono); font-size:11px; color: #EF4444;

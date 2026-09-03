@@ -66,6 +66,15 @@ function isValidMessage(msg) {
   if (t.length === 0 || t.length > 500) return false;
   return true;
 }
+function isValidImage(dataUrl) {
+  if (typeof dataUrl !== 'string') return false;
+  // ~1.8MB base64 ~ 1.35MB binary, limit to avoid DoS
+  if (dataUrl.length > 2_000_000) return false;
+  if (!dataUrl.startsWith('data:image/')) return false;
+  // allow png/jpeg/gif/webp only
+  if (!/^data:image\/(png|jpeg|jpg|gif|webp);base64,/.test(dataUrl)) return false;
+  return true;
+}
 function getUsersList(session) {
   return Array.from(session.users.values()).map(u => u.username).sort((a, b) => a.localeCompare(b));
 }
@@ -152,6 +161,7 @@ app.get(/.*/, (req, res) => {
 
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  maxHttpBufferSize: 5e6, // allow ~2MB base64 images
   connectionStateRecovery: {
     maxDisconnectionDuration: 2 * 60 * 1000,
     skipMiddlewares: true,
@@ -246,6 +256,46 @@ io.on('connection', (socket) => {
       id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}-${socket.id.slice(0, 4)}`,
       username: socket.username,
       message,
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      sessionId: socket.sessionId,
+    };
+    pushHistory(sess, payload);
+    io.to(socket.sessionId).emit('chat message', payload);
+  });
+
+  socket.on('chat image', (data) => {
+    if (!socket.username || !socket.sessionId) {
+      socket.emit('chat error', 'Join a session before sending images');
+      return;
+    }
+    const image = data && typeof data.image === 'string' ? data.image : '';
+    const caption = data && typeof data.caption === 'string' ? data.caption.trim().slice(0, 200) : '';
+    if (!isValidImage(image)) {
+      socket.emit('chat error', 'Invalid image — use PNG/JPEG/GIF/WEBP under ~1.5MB');
+      return;
+    }
+    const sess = sessions.get(socket.sessionId);
+    if (!sess) {
+      socket.emit('chat error', 'Session not found');
+      return;
+    }
+    // reuse spam throttle
+    const now = Date.now();
+    socket._msgTimestamps = socket._msgTimestamps || [];
+    socket._msgTimestamps = socket._msgTimestamps.filter(t => now - t < 1000);
+    if (socket._msgTimestamps.length >= 5) {
+      socket.emit('chat error', 'Slow down — too many messages');
+      return;
+    }
+    socket._msgTimestamps.push(now);
+
+    const payload = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}-${socket.id.slice(0, 4)}`,
+      username: socket.username,
+      message: caption,
+      image,
+      type: 'image',
       timestamp: new Date().toISOString(),
       sessionId: socket.sessionId,
     };

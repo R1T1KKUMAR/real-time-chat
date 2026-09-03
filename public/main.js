@@ -29,6 +29,11 @@ const sidebarSessionId = document.getElementById('sidebar-session-id');
 const sidebarShareRow = document.getElementById('sidebar-share-row');
 const copyLinkBtn = document.getElementById('copy-link');
 const topicEl = document.getElementById('topic');
+const imageInput = document.getElementById('image-input');
+const imagePreview = document.getElementById('image-preview');
+const previewImg = document.getElementById('preview-img');
+const previewName = document.getElementById('preview-name');
+const clearImageBtn = document.getElementById('clear-image');
 
 let username = '';
 let sessionId = '';
@@ -36,6 +41,7 @@ let joined = false;
 let messageCount = 0;
 let typingTimeout = null;
 let isTyping = false;
+let pendingImage = null; // { dataUrl, name }
 const typingUsers = new Set();
 
 const STORAGE_USER = 'signal_username';
@@ -189,6 +195,7 @@ function addChatMessage(data,isSelf){
   li.className=`message ${isSelf?'message--self':''}`;
   if(data.id) li.dataset.id=data.id;
   const time=formatTime(data.timestamp);
+  const isImage = data.type==='image' && typeof data.image==='string' && data.image.startsWith('data:image/');
   li.innerHTML=`
     <div class="message__bar"></div>
     <div class="message__head">
@@ -198,11 +205,21 @@ function addChatMessage(data,isSelf){
         <span class="message__time"></span>
       </div>
     </div>
-    <div class="message__body"></div>
+    ${isImage ? `<img class="message__image" alt="shared image" loading="lazy" />` : `<div class="message__body"></div>`}
+    ${isImage && data.message ? `<div class="message__image-caption"></div>` : ``}
   `;
   li.querySelector('.message__author').textContent=data.username;
   li.querySelector('.message__time').textContent=time;
-  li.querySelector('.message__body').textContent=data.message;
+  if(isImage){
+    const img=li.querySelector('.message__image');
+    img.src=data.image;
+    img.addEventListener('click', ()=> window.open(data.image, '_blank'));
+    if(data.message){
+      li.querySelector('.message__image-caption').textContent=data.message;
+    }
+  } else {
+    li.querySelector('.message__body').textContent=data.message||'';
+  }
   messagesEl.appendChild(li);
   scrollToBottom();
 }
@@ -321,14 +338,53 @@ socket.on('user stop typing', (data)=>{
 });
 socket.on('server shutdown', (msg)=>{ setConnection('offline','Server restarting…'); formHint.textContent=msg; });
 
+// Image handling
+function clearPendingImage(){
+  pendingImage=null;
+  if(imageInput) imageInput.value='';
+  if(imagePreview) imagePreview.style.display='none';
+  if(previewImg) previewImg.removeAttribute('src');
+  if(previewName) previewName.textContent='';
+}
+if(imageInput){
+  imageInput.addEventListener('change', ()=>{
+    const file=imageInput.files && imageInput.files[0];
+    if(!file) return;
+    if(!file.type.startsWith('image/')){ formHint.textContent='Only images allowed'; return; }
+    if(file.size > 1.6*1024*1024){ formHint.textContent='Image too large — max 1.5MB'; imageInput.value=''; return; }
+    if(!['image/png','image/jpeg','image/jpg','image/gif','image/webp'].includes(file.type)){
+      formHint.textContent='Use PNG/JPEG/GIF/WEBP only'; return;
+    }
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const dataUrl=reader.result;
+      if(typeof dataUrl==='string' && dataUrl.length>2000000){ formHint.textContent='Image too large after encoding'; return; }
+      pendingImage={ dataUrl, name: file.name };
+      if(previewImg) previewImg.src=dataUrl;
+      if(previewName) previewName.textContent=`${file.name} (${(file.size/1024).toFixed(0)}KB) — caption optional`;
+      if(imagePreview) imagePreview.style.display='flex';
+      formHint.textContent='';
+      input.focus();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+if(clearImageBtn) clearImageBtn.addEventListener('click', clearPendingImage);
+
 // Form submit
 form.addEventListener('submit', (e)=>{
   e.preventDefault();
   const val=input.value.trim();
-  if(!val) return;
+  const hasImage=!!pendingImage;
+  if(!val && !hasImage) return;
   if(!joined){ formHint.textContent='Create or join a session first'; return; }
   if(val.length>500){ formHint.textContent='Message too long (max 500)'; return; }
-  socket.emit('chat message', val);
+  if(hasImage){
+    socket.emit('chat image', { image: pendingImage.dataUrl, caption: val });
+    clearPendingImage();
+  } else {
+    socket.emit('chat message', val);
+  }
   input.value=''; charCount.textContent='0 / 500';
   if(isTyping){ isTyping=false; clearTimeout(typingTimeout); socket.emit('stop typing'); }
   input.focus();
