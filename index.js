@@ -1,33 +1,297 @@
-
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const path = require('path');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const helmet = require('helmet');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
 
-app.use(express.static('public'));
+// --- Security & middleware ---
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// --- Session store (per-room) ---
+const MAX_HISTORY = 100;
+const sessions = new Map(); // sessionId -> { id, createdAt, users: Map<socketId,{username,joinedAt}>, usernames:Set<lower>, history:[], pendingLeaves:Map<lower,{timeout,oldSocketId,username}> }
+
+function generateSessionId() {
+  // 6-char uppercase alphanumeric, easy to share/remember
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  if (sessions.has(id)) return generateSessionId();
+  return id;
+}
+function getOrCreateSession(sessionId) {
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, {
+      id: sessionId,
+      createdAt: Date.now(),
+      users: new Map(),
+      usernames: new Set(),
+      history: [],
+      pendingLeaves: new Map(),
+    });
+    console.log(`[session] created ${sessionId}`);
+  }
+  return sessions.get(sessionId);
+}
+// Pre-create general for backward compat
+getOrCreateSession('general');
+
+function isValidUsername(name) {
+  if (typeof name !== 'string') return false;
+  const t = name.trim();
+  if (t.length < 2 || t.length > 20) return false;
+  if (!/^[a-zA-Z0-9 _\-.]{2,20}$/.test(t)) return false;
+  return true;
+}
+function isValidSessionId(id) {
+  if (typeof id !== 'string') return false;
+  const t = id.trim().toUpperCase();
+  if (t.length < 3 || t.length > 20) return false;
+  if (!/^[A-Z0-9_-]{3,20}$/.test(t)) return false;
+  return true;
+}
+function isValidMessage(msg) {
+  if (typeof msg !== 'string') return false;
+  const t = msg.trim();
+  if (t.length === 0 || t.length > 500) return false;
+  return true;
+}
+function getUsersList(session) {
+  return Array.from(session.users.values()).map(u => u.username).sort((a, b) => a.localeCompare(b));
+}
+function broadcastUsers(sessionId) {
+  const sess = sessions.get(sessionId);
+  if (!sess) return;
+  io.to(sessionId).emit('users update', { users: getUsersList(sess), count: sess.users.size, sessionId });
+}
+function pushHistory(session, payload) {
+  session.history.push(payload);
+  if (session.history.length > MAX_HISTORY) session.history.shift();
+}
+function joinSession(socket, username, sessionId) {
+  const sess = getOrCreateSession(sessionId);
+  const lower = username.toLowerCase();
+  const pending = sess.pendingLeaves.get(lower);
+  const isReclaim = !!pending;
+
+  if (sess.usernames.has(lower) && !isReclaim) {
+    socket.emit('username error', `"${username}" is already taken in ${sessionId} — try another`);
+    return false;
+  }
+  if (isReclaim) {
+    clearTimeout(pending.timeout);
+    sess.pendingLeaves.delete(lower);
+    sess.users.delete(pending.oldSocketId);
+    console.log(`[reclaim] ${username} ${pending.oldSocketId} -> ${socket.id} in ${sessionId}`);
+  }
+  // clean previous session if socket was in another room
+  if (socket.sessionId && socket.sessionId !== sessionId) {
+    const oldSess = sessions.get(socket.sessionId);
+    if (oldSess && oldSess.users.has(socket.id)) {
+      oldSess.users.delete(socket.id);
+      oldSess.usernames.delete(socket.username?.toLowerCase());
+      socket.leave(socket.sessionId);
+      broadcastUsers(socket.sessionId);
+    }
+  }
+  if (socket.username && socket.sessionId === sessionId) {
+    // re-join same session with different name
+    const oldLower = socket.username.toLowerCase();
+    if (oldLower !== lower) {
+      sess.usernames.delete(oldLower);
+      const oldPending = sess.pendingLeaves.get(oldLower);
+      if (oldPending) { clearTimeout(oldPending.timeout); sess.pendingLeaves.delete(oldLower); }
+    }
+    sess.users.delete(socket.id);
+  }
+
+  socket.username = username;
+  socket.sessionId = sessionId;
+  socket.joinedAt = Date.now();
+  sess.users.set(socket.id, { username, joinedAt: socket.joinedAt });
+  sess.usernames.add(lower);
+  socket.join(sessionId);
+
+  console.log(`[join] ${username} -> ${sessionId} (${socket.id})${isReclaim ? ' (reclaimed)' : ''}`);
+
+  socket.emit('joined', { username, sessionId, users: getUsersList(sess), history: sess.history });
+
+  if (!isReclaim) {
+    socket.to(sessionId).emit('user joined', {
+      username,
+      timestamp: new Date().toISOString(),
+      count: sess.users.size,
+      sessionId,
+    });
+  }
+  broadcastUsers(sessionId);
+  return true;
+}
+
+// Health check
+app.get('/health', (req, res) => {
+  const totalUsers = Array.from(sessions.values()).reduce((a, s) => a + s.users.size, 0);
+  res.json({ status: 'ok', uptime: process.uptime(), sessions: sessions.size, totalUsers, ids: Array.from(sessions.keys()) });
+});
+
+// Fallback for SPA
+app.get(/.*/, (req, res) => {
+  if (req.path.startsWith('/socket.io')) return res.status(404).end();
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
+});
 
 io.on('connection', (socket) => {
-  console.log('a user connected');
+  console.log(`[connect] ${socket.id}`);
 
-  socket.on('disconnect', () => {
-    console.log('user disconnected');
-    io.emit('user left', socket.username);
+  // let client know existing sessions count (for UI)
+  // don't spam, just send general users
+  const general = sessions.get('general');
+  if (general) socket.emit('users update', { users: getUsersList(general), count: general.users.size, sessionId: 'general' });
+
+  socket.on('create session', ({ username }) => {
+    const name = typeof username === 'string' ? username.trim() : '';
+    if (!isValidUsername(name)) {
+      socket.emit('username error', 'Username must be 2–20 chars, letters/numbers/_ - . only');
+      return;
+    }
+    const sessionId = generateSessionId();
+    getOrCreateSession(sessionId); // ensure entry
+    const ok = joinSession(socket, name, sessionId);
+    if (ok) socket.emit('session created', { sessionId });
   });
 
-  socket.on('chat message', (msg) => {
-    io.emit('chat message', { username: socket.username, message: msg });
+  socket.on('join session', ({ username, sessionId }) => {
+    const name = typeof username === 'string' ? username.trim() : '';
+    const sid = typeof sessionId === 'string' ? sessionId.trim().toUpperCase() : '';
+    if (!isValidUsername(name)) {
+      socket.emit('username error', 'Username must be 2–20 chars, letters/numbers/_ - . only');
+      return;
+    }
+    if (!isValidSessionId(sid)) {
+      socket.emit('session error', 'Session ID must be 3–20 chars (A-Z, 0-9, _ -)');
+      return;
+    }
+    if (!sessions.has(sid)) {
+      socket.emit('session error', `Session "${sid}" not found — create a new one`);
+      return;
+    }
+    joinSession(socket, name, sid);
   });
 
-  socket.on('set username', (username) => {
-    socket.username = username;
-    io.emit('user joined', username);
+  // backward compat: old clients using set username -> join general
+  socket.on('set username', (rawUsername) => {
+    const username = typeof rawUsername === 'string' ? rawUsername.trim() : '';
+    if (!isValidUsername(username)) {
+      socket.emit('username error', 'Username must be 2–20 chars, letters/numbers/_ - . only');
+      return;
+    }
+    // if client already in a session via new flow, treat as general
+    joinSession(socket, username, 'general');
   });
+
+  socket.on('chat message', (rawMsg) => {
+    if (!socket.username || !socket.sessionId) {
+      socket.emit('chat error', 'Join a session before sending messages');
+      return;
+    }
+    if (!isValidMessage(rawMsg)) {
+      socket.emit('chat error', 'Message must be 1–500 characters');
+      return;
+    }
+    const sess = sessions.get(socket.sessionId);
+    if (!sess) {
+      socket.emit('chat error', 'Session not found');
+      return;
+    }
+    const message = rawMsg.trim();
+    const payload = {
+      id: `${Date.now()}-${socket.id.slice(0, 6)}`,
+      username: socket.username,
+      message,
+      timestamp: new Date().toISOString(),
+      sessionId: socket.sessionId,
+    };
+    pushHistory(sess, payload);
+    io.to(socket.sessionId).emit('chat message', payload);
+  });
+
+  socket.on('typing', () => {
+    if (!socket.username || !socket.sessionId) return;
+    socket.to(socket.sessionId).emit('user typing', { username: socket.username, sessionId: socket.sessionId });
+  });
+  socket.on('stop typing', () => {
+    if (!socket.username || !socket.sessionId) return;
+    socket.to(socket.sessionId).emit('user stop typing', { username: socket.username, sessionId: socket.sessionId });
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`[disconnect] ${socket.id} ${socket.username || '(no username)'} session=${socket.sessionId || '-'} reason=${reason}`);
+    if (!socket.username || !socket.sessionId) return;
+    const sess = sessions.get(socket.sessionId);
+    if (!sess) return;
+    const username = socket.username;
+    const lower = username.toLowerCase();
+    const sessionId = socket.sessionId;
+    const timeout = setTimeout(() => {
+      sess.pendingLeaves.delete(lower);
+      sess.usernames.delete(lower);
+      sess.users.delete(socket.id);
+      io.to(sessionId).emit('user left', {
+        username,
+        timestamp: new Date().toISOString(),
+        count: sess.users.size,
+        sessionId,
+      });
+      broadcastUsers(sessionId);
+      console.log(`[leave] ${username} from ${sessionId} grace expired`);
+      // optional: cleanup empty non-general sessions after 1h? keep for now to allow history
+      if (sess.users.size === 0 && sessionId !== 'general' && sess.history.length === 0) {
+        // keep at least 10min for history, but if empty we could delete
+      }
+    }, 3500);
+    sess.pendingLeaves.set(lower, { timeout, username, oldSocketId: socket.id });
+    console.log(`[grace] ${username} in ${sessionId} has 3.5s to reclaim`);
+  });
+
+  socket.on('error', (err) => console.error(`[socket error] ${socket.id}`, err));
+});
+
+// Error handling
+app.use((err, req, res, next) => {
+  console.error('[express error]', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`listening on *:${PORT}`);
+  console.log(`✓ listening on *:${PORT} (${process.env.NODE_ENV || 'development'})`);
 });
+
+function shutdown(signal) {
+  console.log(`\n[${signal}] shutting down gracefully...`);
+  io.emit('server shutdown', 'Server is restarting');
+  server.close(() => { console.log('HTTP server closed'); process.exit(0); });
+  setTimeout(() => { console.error('Forced shutdown'); process.exit(1); }, 5000);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+module.exports = { app, server, io, sessions };

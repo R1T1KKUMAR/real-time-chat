@@ -1,20 +1,154 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Real-Time Chat</title>
-  <link rel="stylesheet" type="text/css" href="/style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signal — Real-time Transmission</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div id="username-container">
-    <input id="username-input" placeholder="Enter your username" />
-    <button id="join-chat">Join Chat</button>
+  <!-- App Shell -->
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__top">
+        <div class="brand">
+          <div class="brand__mark">
+            <span class="brand__pulse"></span>
+            <span class="brand__dot"></span>
+          </div>
+          <div class="brand__text">
+            <h1 class="brand__name">SIGNAL</h1>
+            <p class="brand__sub">Transmission &bull; Live</p>
+          </div>
+          <span class="brand__live">● LIVE</span>
+        </div>
+
+        <div class="presence-card">
+          <div class="presence-card__row">
+            <span class="presence-card__label">Channel</span>
+            <span class="presence-card__value" id="sidebar-session"># —</span>
+          </div>
+          <div class="presence-card__row" id="sidebar-share-row" style="display:none">
+            <span class="presence-card__label">Session ID</span>
+            <span class="presence-card__value presence-card__value--accent" id="sidebar-session-id" style="font-family:var(--mono); letter-spacing:0.08em"></span>
+          </div>
+          <div class="presence-card__row">
+            <span class="presence-card__label">Encryption</span>
+            <span class="presence-card__value presence-card__value--accent">end-to-end</span>
+          </div>
+          <div class="presence-card__freq">
+            <div class="freq-bar"><i style="height: 40%"></i><i style="height: 80%"></i><i style="height: 55%"></i><i style="height: 90%"></i><i style="height: 35%"></i><i style="height: 70%"></i><i style="height: 45%"></i><i style="height: 85%"></i><i style="height: 60%"></i><i style="height: 30%"></i></div>
+            <span>24.7 kHz &mdash; stable</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar__section">
+        <div class="section-head">
+          <h2>ONLINE — <span id="online-count">0</span></h2>
+          <span class="section-head__dot"></span>
+        </div>
+        <ul id="user-list" class="user-list">
+          <li class="user-list__empty">No one else here yet.<br>Invite someone to start.</li>
+        </ul>
+      </div>
+
+      <div class="sidebar__footer">
+        <div class="conn">
+          <span class="conn__dot" id="conn-dot"></span>
+          <span class="conn__text" id="conn-text">Connecting…</span>
+        </div>
+        <p class="sidebar__hint">Press <kbd>/</kbd> to focus &middot; <kbd>Esc</kbd> to clear</p>
+      </div>
+    </aside>
+
+    <!-- Main Chat -->
+    <main class="chat">
+      <header class="chat__header">
+        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="chat__title">
+          <h2><span class="hash">#</span> <span id="header-session">—</span></h2>
+          <p id="topic">Create a session to get an ID, or join with an ID.</p>
+        </div>
+        <div class="chat__meta">
+          <button class="pill pill--action" id="copy-link" style="display:none" title="Copy invite link">⎘ Copy ID</button>
+          <span class="pill" id="latency-pill">~12ms relay</span>
+          <span class="pill pill--ghost" id="msg-count">0 messages</span>
+        </div>
+      </header>
+
+      <div class="chat__scroll" id="chat-scroll">
+        <div class="chat__grid-bg" aria-hidden="true"></div>
+        <ul id="messages" class="messages">
+          <!-- messages injected here -->
+        </ul>
+        <div id="typing-indicator" class="typing" aria-live="polite"></div>
+        <div class="chat__empty" id="chat-empty">
+          <div class="empty__badge">∿ ∿ ∿</div>
+          <h3>No transmissions yet</h3>
+          <p>Be the first to break the silence. Your message<br>will appear with a timestamp and trail.</p>
+        </div>
+      </div>
+
+      <form id="form" class="composer" autocomplete="off">
+        <div class="composer__field">
+          <span class="composer__prefix" id="composer-prefix">—</span>
+          <input id="input" type="text" maxlength="500" placeholder="Transmit a message…" autocomplete="off" />
+          <span class="composer__count" id="char-count">0 / 500</span>
+        </div>
+        <button type="submit" class="composer__send" id="send-btn" aria-label="Send message">
+          <span>Send</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </form>
+      <p class="composer__hint" id="form-hint"></p>
+    </main>
   </div>
-  <div id="chat-container" style="display: none;">
-    <ul id="messages"></ul>
-    <form id="form" action="">
-      <input id="input" autocomplete="off" /><button>Send</button>
-    </form>
+
+  <!-- Join Overlay -->
+  <div class="overlay" id="overlay">
+    <div class="join-card join-card--wide" role="dialog" aria-modal="true" aria-labelledby="join-title">
+      <div class="join-card__eyebrow">Signal / Entry Protocol</div>
+      <h2 id="join-title">Identify yourself</h2>
+      <p class="join-card__desc">Pick a handle. Then create a new session (ID auto-generated) or join with an ID. Session scoped — messages & presence stay inside.</p>
+
+      <label for="username-input" class="sr-only">Username</label>
+      <div class="join-card__field">
+        <input id="username-input" type="text" placeholder="e.g. mika_92" maxlength="20" autocomplete="username" autofocus />
+      </div>
+      <p class="join-card__error" id="join-error" role="alert"></p>
+
+      <div class="session-options">
+        <div class="option-card">
+          <div class="option-card__icon">✦</div>
+          <h3>Create session</h3>
+          <p>Start a private room. ID is auto-generated (6 chars) and shareable via link.</p>
+          <button id="create-session" type="button" class="option-btn option-btn--primary">Create new session →</button>
+        </div>
+        <div class="option-card">
+          <div class="option-card__icon">→</div>
+          <h3>Join session</h3>
+          <p>Have an ID? Enter it to join that room.</p>
+          <div class="join-row">
+            <input id="session-input" type="text" placeholder="e.g. X7K9PQ" maxlength="20" autocomplete="off" style="text-transform:uppercase" />
+            <button id="join-session" type="button" class="option-btn">Join →</button>
+          </div>
+        </div>
+      </div>
+      <p class="join-card__error" id="session-error" role="alert"></p>
+      <p class="join-card__hint">Tip: share the invite link <code>?session=X7K9PQ</code> — others can join directly.</p>
+
+      <div class="join-card__footer">
+        <span class="dot-pulse"></span>
+        <span>Secure relay — history kept per session (last 100 messages)</span>
+      </div>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
