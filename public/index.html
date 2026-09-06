@@ -4,6 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal — Real-time Transmission</title>
+  <meta name="description" content="Private real-time chat rooms. Create a session, share the ID, chat live." />
+  <meta name="theme-color" content="#0B0F16" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Signal" />
+  <script>try{var _t=localStorage.getItem('signal_theme');if(_t)document.documentElement.dataset.theme=_t;}catch(e){}</script>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -35,6 +45,10 @@
           <div class="presence-card__row" id="sidebar-share-row" style="display:none">
             <span class="presence-card__label">Session ID</span>
             <span class="presence-card__value presence-card__value--accent" id="sidebar-session-id" style="font-family:var(--mono); letter-spacing:0.08em"></span>
+          </div>
+          <div class="presence-card__row" id="sidebar-key-row" style="display:none">
+            <span class="presence-card__label">Room key</span>
+            <span class="presence-card__value" id="sidebar-keyfp" title="Compare with your partner — must match"></span>
           </div>
           <div class="presence-card__row">
             <span class="presence-card__label">Encryption</span>
@@ -78,6 +92,9 @@
         </div>
         <div class="chat__meta">
           <button class="pill pill--action" id="copy-link" style="display:none" title="Copy invite link">⎘ Copy ID</button>
+          <button class="pill pill--action" id="qr-btn" style="display:none" title="Show invite QR">QR</button>
+          <button class="pill pill--action" id="theme-btn" title="Change theme">🎨</button>
+          <button class="pill pill--action" id="sound-btn" title="Toggle message sounds">🔊</button>
           <span class="pill" id="latency-pill">~12ms relay</span>
           <span class="pill pill--ghost" id="msg-count">0 messages</span>
         </div>
@@ -96,8 +113,10 @@
         </div>
       </div>
 
-      <div id="reply-preview" class="reply-preview" style="display:none">
-        <div class="reply-preview__bar"></div>
+      <div id="locked-banner" class="locked-banner" style="display:none">
+        <span>🔒 End-to-end encrypted — open the full invite link (with key) to read &amp; send.</span>
+      </div>
+      <div id="reply-preview" class="reply-preview" style="display:none">        <div class="reply-preview__bar"></div>
         <div class="reply-preview__content">
           <span class="reply-preview__label">Replying to <strong id="reply-to-user"></strong></span>
           <span class="reply-preview__snippet" id="reply-to-snippet"></span>
@@ -109,6 +128,13 @@
         <button id="clear-image" type="button" class="image-preview__clear" aria-label="Remove image">✕</button>
         <span id="preview-name"></span>
       </div>
+      <div id="rec-bar" class="rec-bar" style="display:none">
+        <span class="rec-bar__dot"></span>
+        <span id="rec-time" class="rec-bar__time">0:00 / 2:00</span>
+        <canvas id="rec-wave" width="140" height="28"></canvas>
+        <span class="rec-bar__hint">release to send</span>
+        <button id="rec-cancel" type="button" class="image-preview__clear" aria-label="Cancel recording">✕</button>
+      </div>
       <form id="form" class="composer" autocomplete="off">
         <div class="composer__field">
           <label class="composer__attach" for="image-input" title="Send image (PNG/JPEG/GIF/WEBP ≤1.5MB)">
@@ -117,6 +143,14 @@
           </label>
           <span class="composer__prefix" id="composer-prefix">—</span>
           <input id="input" type="text" maxlength="500" placeholder="Transmit a message…" autocomplete="off" />
+          <button type="button" class="composer__mic" id="voice-btn" title="Hold to record a voice note">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+          </button>
+          <button type="button" class="composer__mic" id="burn-btn" title="Disappearing message timer">⏱</button>
+          <button type="button" class="composer__mic" id="poll-btn" title="Create a poll">📊</button>
+          <label class="composer__mic" for="file-input" title="Send file (≤3MB)" style="font-size:15px">📎
+            <input id="file-input" type="file" hidden />
+          </label>
           <span class="composer__count" id="char-count">0 / 500</span>
         </div>
         <button type="submit" class="composer__send" id="send-btn" aria-label="Send message">
@@ -126,6 +160,37 @@
       </form>
       <p class="composer__hint" id="form-hint"></p>
     </main>
+  </div>
+
+  <!-- Poll Composer Modal -->
+  <div class="modal" id="poll-modal" style="display:none" role="dialog" aria-modal="true" aria-label="Create a poll">
+    <div class="modal__card">
+      <h3>Create a poll</h3>
+      <p class="modal__desc">Encrypted end-to-end — votes are live tallies.</p>
+      <input id="poll-q" type="text" maxlength="200" placeholder="Question…" autocomplete="off" />
+      <div id="poll-opts"></div>
+      <div class="modal__row" style="margin-top:10px">
+        <button id="poll-add-opt" type="button" class="option-btn">+ Option</button>
+      </div>
+      <div class="modal__row" style="margin-top:10px">
+        <button id="poll-send" type="button" class="option-btn option-btn--primary">Send poll</button>
+        <button id="poll-cancel" type="button" class="option-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Invite Modal -->
+  <div class="modal" id="qr-modal" style="display:none" role="dialog" aria-modal="true" aria-label="Invite QR code">
+    <div class="modal__card">
+      <h3>Invite to <span id="qr-room" style="font-family:var(--mono)"></span></h3>
+      <p class="modal__desc">Scan with a phone camera to join — the link carries the room key.</p>
+      <canvas id="qr-canvas" width="232" height="232"></canvas>
+      <p class="modal__link" id="qr-link"></p>
+      <div class="modal__row">
+        <button id="qr-copy" type="button" class="option-btn option-btn--primary">Copy link</button>
+        <button id="qr-close" type="button" class="option-btn">Close</button>
+      </div>
+    </div>
   </div>
 
   <!-- Join Overlay -->
@@ -169,6 +234,16 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/main.js"></script>
+  <script src="/qr.js?v=1.7.0"></script>
+  <script src="/main.js?v=1.7.0"></script>
+  <script>
+    // PWA: cache the app shell for instant launch / installability.
+    // Live chat traffic bypasses the worker (see sw.js), so behaviour is identical.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
