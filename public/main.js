@@ -64,6 +64,13 @@ const pollAddOpt = document.getElementById('poll-add-opt');
 const pollSend = document.getElementById('poll-send');
 const pollCancel = document.getElementById('poll-cancel');
 const themeBtn = document.getElementById('theme-btn');
+const shieldBtn = document.getElementById('shield-btn');
+const privacyShield = document.getElementById('privacy-shield');
+const privacyToast = document.getElementById('privacy-toast');
+const watermarkEl = document.getElementById('watermark');
+const installBtn = document.getElementById('install-btn');
+const installHint = document.getElementById('install-hint');
+const moreBtn = document.getElementById('more-btn');
 
 let username = '';
 let sessionId = '';
@@ -419,6 +426,7 @@ document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape'){
     if(qrModal && qrModal.style.display!=='none'){ closeQR(); return; }
     if(pollModal && pollModal.style.display!=='none'){ closePoll(); return; }
+    if(form && form.classList.contains('open-more')){ closeMore(); return; }
     if(recState){ stopRecording(false); return; }
     if(pendingReply){ clearPendingReply(); return; }
     if(pendingImage){ clearPendingImage(); return; }
@@ -1243,6 +1251,7 @@ if(themeBtn) themeBtn.addEventListener('click', ()=>{
 // Form submit
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
+  closeMore();
   const val=input.value.trim();
   const hasImage=!!pendingImage;
   const hasFile=!!pendingFile;
@@ -1283,6 +1292,197 @@ form.addEventListener('submit', async (e)=>{
   stopTyping();
   input.focus();
 });
+
+// --- Screenshot / screen-recording deterrents (best-effort) ---
+// Browsers give pages NO API to truly block OS screenshots, Snipping Tool,
+// phone screenshots, or OBS capture. This module only deters casual capture:
+//  - hides content during print / PrintScreen flash
+//  - blurs content when the window loses focus (snip tools steal focus)
+//  - blocks right-click save on the chat surface
+//  - stamps a tracing watermark (username + time) so leaks are attributable
+// True blocking needs a native wrapper: Android FLAG_SECURE,
+// iOS preventScreenCapture, or Electron setContentProtection(true).
+let shieldOn = true;
+try{ shieldOn = localStorage.getItem('signal_shield') !== 'off'; }catch{}
+let toastTimer = 0;
+function showPrivacyToast(msg){
+  if(!privacyToast) return;
+  privacyToast.textContent = msg;
+  privacyToast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>privacyToast.classList.remove('show'), 2200);
+}
+function setPrivacyHide(on){
+  document.body.classList.toggle('privacy-hide', !!on);
+}
+function flashShield(msg, ms){
+  setPrivacyHide(true);
+  if(msg) showPrivacyToast(msg);
+  setTimeout(()=>{ setPrivacyHide(shieldOn ? !document.hasFocus() : false); }, ms || 1200);
+}
+function refreshShieldBtn(){
+  if(!shieldBtn) return;
+  shieldBtn.textContent = shieldOn ? '🛡️' : '🛡️‍⬛';
+  shieldBtn.classList.toggle('shield-off', !shieldOn);
+  shieldBtn.title = shieldOn
+    ? 'Privacy shield ON: chat hides when app loses focus (click to disable)'
+    : 'Privacy shield OFF (click to enable)';
+}
+function updateWatermark(){
+  if(!watermarkEl) return;
+  watermarkEl.innerHTML = '';
+  if(!joined || !username) return;
+  const tag = `${username} • ${sessionId} • ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+  const frag = document.createDocumentFragment();
+  // tile across the viewport; rotated via CSS
+  for(let y = -40; y < window.innerHeight + 100; y += 130){
+    for(let x = -120; x < window.innerWidth + 100; x += 260){
+      const s = document.createElement('span');
+      s.className = 'watermark__tile';
+      s.style.left = `${x}px`;
+      s.style.top = `${y + ((x / 260) % 2 ? 40 : 0)}px`;
+      s.textContent = tag;
+      frag.appendChild(s);
+    }
+  }
+  watermarkEl.appendChild(frag);
+}
+if(shieldBtn) shieldBtn.addEventListener('click', ()=>{
+  shieldOn = !shieldOn;
+  try{ localStorage.setItem('signal_shield', shieldOn ? 'on' : 'off'); }catch{}
+  refreshShieldBtn();
+  setPrivacyHide(false);
+  showPrivacyToast(shieldOn ? '🛡️ Privacy shield ON — chat hides in background' : 'Privacy shield OFF');
+  input && input.focus && document.hasFocus() && input.focus();
+});
+if(privacyShield) privacyShield.addEventListener('click', ()=>{ setPrivacyHide(false); input && input.focus && input.focus(); });
+refreshShieldBtn();
+window.addEventListener('resize', ()=>{ if(joined) updateWatermark(); });
+setInterval(()=>{ if(joined) updateWatermark(); }, 30000);
+// Hook into join: refresh watermark once identity is known
+const _origSetSessionUI = setSessionUI;
+setSessionUI = function(sid){ _origSetSessionUI(sid); updateWatermark(); };
+
+// 1) Keyboard: PrintScreen, save/print/devtools shortcuts -> blank + warn
+document.addEventListener('keydown', (e)=>{
+  const k = e.key || '';
+  const mod = e.ctrlKey || e.metaKey;
+  const isPrintScreen = k === 'PrintScreen' || k === 'Snapshot';
+  // macOS screenshot chords: Cmd+Shift+3/4/5 ; Windows snip: Win+Shift+S
+  const isMacShot = e.metaKey && e.shiftKey && ['3','4','5'].includes(k);
+  const isWinSnip = e.shiftKey && (e.metaKey || e.key === 'Meta') && (k.toLowerCase?.() === 's');
+  const isSavePrint = mod && !e.shiftKey && ['p','s'].includes(k.toLowerCase?.() || '');
+  const isDevtools = (e.ctrlKey && e.shiftKey && ['i','j','c','k'].includes((k || '').toLowerCase())) || k === 'F12';
+  if(isPrintScreen || isMacShot || isWinSnip){
+    e.preventDefault();
+    try{ if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText('').catch(()=>{}); }catch{}
+    flashShield('🛡️ Screenshots are discouraged in this private chat', 1500);
+    return false;
+  }
+  if(isSavePrint){
+    e.preventDefault();
+    showPrivacyToast('🛡️ Saving / printing is disabled in this private chat');
+    return false;
+  }
+  if(isDevtools){
+    // don't fight devtools hard (breaks debugging), just warn once
+    showPrivacyToast('🛡️ This chat is private — please don\'t copy content out');
+  }
+});
+document.addEventListener('keyup', (e)=>{
+  if((e.key || '') === 'PrintScreen'){
+    try{ if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText('').catch(()=>{}); }catch{}
+    flashShield('🛡️ Screenshots are discouraged in this private chat', 1500);
+  }
+});
+// 2) Right-click / drag / copy-out deterrent on the chat surface only
+document.addEventListener('contextmenu', (e)=>{
+  if(e.target && e.target.closest && e.target.closest('#chat-scroll, #messages, .message__image, .sidebar')){
+    e.preventDefault();
+    showPrivacyToast('🛡️ Right-click is disabled to protect this chat');
+    return false;
+  }
+});
+document.addEventListener('dragstart', (e)=>{
+  if(e.target && e.target.closest && e.target.closest('#messages')) e.preventDefault();
+});
+// 3) Print (Ctrl+P / Save-as-PDF) -> blank, then restore
+window.addEventListener('beforeprint', ()=>setPrivacyHide(true));
+window.addEventListener('afterprint', ()=>{ if(document.hasFocus() || !shieldOn) setPrivacyHide(false); showPrivacyToast('🛡️ Printing is disabled in this private chat'); });
+// 4) Background blur: opening Snipping Tool / switching apps fires blur.
+// When shield is on, hide content until the user clicks back.
+window.addEventListener('blur', ()=>{ if(shieldOn && joined) setPrivacyHide(true); });
+window.addEventListener('focus', ()=>{ setPrivacyHide(false); maybeEmitSeen(); });
+// Mobile: double-tap-and-hold /PiP recording still captures pixels while
+// visible — nothing a web page can do there; watermark remains the trace.
+
+// --- Composer "more" popup (phones): voice/burn/poll/file live in a ＋
+// popup on small screens so the send row always fits. Desktop unaffected.
+function closeMore(){
+  if(!moreBtn || !form) return;
+  form.classList.remove('open-more');
+  moreBtn.setAttribute('aria-expanded', 'false');
+  moreBtn.textContent = '＋';
+}
+if(moreBtn && form){
+  moreBtn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const open = form.classList.toggle('open-more');
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    moreBtn.textContent = open ? '✕' : '＋';
+  });
+  document.addEventListener('click', (e)=>{
+    if(form.classList.contains('open-more') && !(e.target && e.target.closest && e.target.closest('#form'))) closeMore();
+  });
+}
+
+// --- PWA install (Android) ---
+// Chrome fires beforeinstallprompt only briefly and sometimes not at all —
+// without capturing it there is no install entry point ("sometimes works").
+// We stash the event, show our own Install button, and otherwise print the
+// manual path so install NEVER dead-ends.
+let deferredPrompt = null;
+function isStandalone(){
+  try{
+    if(window.matchMedia('(display-mode: standalone)').matches) return true;
+    if(window.navigator.standalone === true) return true; // iOS
+    if(new URLSearchParams(location.search).get('source') === 'pwa') return true;
+  }catch{}
+  return false;
+}
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredPrompt = e;
+  if(installHint) installHint.style.display = 'none';
+  if(installBtn && !isStandalone()) installBtn.style.display = 'block';
+});
+if(installBtn) installBtn.addEventListener('click', async ()=>{
+  if(!deferredPrompt) return;
+  try{
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+  }catch{}
+  deferredPrompt = null;
+  installBtn.style.display = 'none';
+});
+window.addEventListener('appinstalled', ()=>{
+  deferredPrompt = null;
+  if(installBtn) installBtn.style.display = 'none';
+  if(installHint) installHint.style.display = 'none';
+  showPrivacyToast('📲 App installed — launch it from your home screen');
+});
+// Manual fallback when the prompt never arrives (iOS, dismissed prompt,
+// desktop): tell the user exactly where to tap.
+setTimeout(()=>{
+  if(isStandalone() || !installHint) return;
+  if(deferredPrompt || (installBtn && installBtn.style.display === 'block')) return;
+  if(joined) return; // entry screen gone — nothing to attach to
+  const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+  installHint.textContent = isiOS
+    ? 'Install on iPhone: Share ⬆ → Add to Home Screen.'
+    : 'Install on Android: browser menu ⋮ → Add to Home screen / Install app.';
+  installHint.style.display = 'block';
+}, 3500);
 
 // Initial
 updateEmptyState();

@@ -15,6 +15,13 @@ app.use(helmet({
 }));
 app.use(cors());
 app.use(express.json());
+// PWA: the service worker must NEVER be served stale — a cached sw.js pins
+// users to an old shell and breaks "install / update" on Android.
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-store, must-revalidate');
+  res.set('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Session store (per-room) ---
@@ -25,7 +32,7 @@ const MAX_HISTORY = 100;
 // 30s tolerates short backgrounding; anything longer means the phone slept
 // and "left" is the honest presence state (same as WhatsApp "last seen").
 const LEAVE_GRACE_MS = 30000;
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.3';
 const sessions = new Map(); // sessionId -> { id, createdAt, users: Map<socketId,{username,joinedAt}>, usernames:Set<lower>, history:[], pendingLeaves:Map<lower,{timeout,oldSocketId,username}> }
 
 function generateSessionId() {

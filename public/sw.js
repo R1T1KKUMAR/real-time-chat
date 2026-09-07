@@ -1,23 +1,36 @@
 /* Signal PWA service worker — app-shell caching only.
  * Live traffic (/socket.io/*, /health) is NEVER intercepted, so real-time
  * chat, presence and typing behave exactly like the website.
- * Bump CACHE below whenever the shell (html/css/js) changes.
+ *
+ * BUMP THIS together with the ?v= query in index.html whenever the shell
+ * (html/css/js) changes, otherwise Android keeps the old shell.
  */
-const CACHE = 'signal-shell-v1.7.1';
+const CACHE = 'signal-shell-v1.7.3';
+// NOTE: unversioned paths on purpose — the fetch handler matches with
+// ignoreSearch so ?v= cache-busters still hit the cache.
 const SHELL_URLS = [
   '/',
   '/index.html',
   '/style.css',
-  '/qr.js?v=1.7.1',
-  '/main.js?v=1.7.1',
+  '/qr.js',
+  '/main.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/maskable-512.png',
+  '/icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
+  // Non-atomic: one flaky URL must NOT kill the whole install
+  // (cache.addAll rejects everything if a single request fails —
+  // the classic "PWA sometimes won't install" bug).
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL_URLS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((c) => Promise.allSettled(
+        SHELL_URLS.map((u) => c.add(new Request(u, { cache: 'reload' })))
+      ))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -29,9 +42,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Allow the page to trigger immediate activation for updates.
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+});
+
 function isShellAsset(pathname) {
-  if (SHELL_URLS.includes(pathname)) return true;
-  return pathname === '/main.js'; // versioned query (?v=) still the shell script
+  return SHELL_URLS.includes(pathname);
 }
 
 self.addEventListener('fetch', (event) => {
@@ -42,25 +59,33 @@ self.addEventListener('fetch', (event) => {
   // Real-time + health traffic must always hit the network.
   if (url.pathname.startsWith('/socket.io/') || url.pathname === '/health') return;
 
-  // App shell assets: cache-first (instant launch, works offline for the UI).
+  // Page navigations (/, /?session=XX, /?source=pwa): network-first so the
+  // installed app never gets stuck on stale HTML, cached shell as fallback
+  // so invite links still open offline.
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put('/index.html', copy));
+          return res;
+        })
+        .catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // App shell assets: cache-first (instant launch), query-insensitive so
+  // ?v= cache-busters match the precached entries.
   if (isShellAsset(url.pathname)) {
     event.respondWith(
-      caches.match(req).then(
+      caches.match(req, { ignoreSearch: true }).then(
         (hit) => hit || fetch(req).then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy));
           return res;
         })
       )
-    );
-    return;
-  }
-
-  // Page navigations (e.g. /?session=XXYNK3, /?source=pwa): network-first,
-  // fall back to the cached shell so a shared link opens even offline.
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).catch(() => caches.match('/index.html'))
     );
   }
 });

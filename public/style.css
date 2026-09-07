@@ -733,6 +733,7 @@ body{
 }
 .join-row input:focus{ border-color: rgba(46,196,182,0.4); box-shadow: 0 0 0 3px rgba(46,196,182,0.12) }
 .join-row .option-btn{ width:auto; white-space:nowrap; padding:10px 16px }
+#install-btn{ margin-top:12px; }
 .pill--action{
   cursor:pointer;
   background: rgba(255,90,60,0.12);
@@ -925,18 +926,43 @@ html[data-theme="sunset"]{
   #latency-pill, #msg-count{ display: none; }
   .join-card h2{ font-size: 24px; }
 }
-/* Phones: composer compaction (7 controls must fit 360px) */
-@media (max-width: 560px){
-  .composer{ gap: 8px; }
-  .composer__field{ gap: 8px; padding: 5px 8px 5px 10px; }
-  .composer__mic, .composer__attach{ width: 32px; height: 32px; border-radius: 9px; font-size: 14px; }
-  .composer__send{ padding: 9px 12px; }
-}
-/* Small phones (320-400px): icon-only send, essentials only */
-@media (max-width: 400px){
+/* Phones: composer compaction — extras collapse into a ＋ popup so the
+   row (attach + input + ＋ + send) always fits 320px screens */
+.composer__extras{ display: contents; }
+.composer__more-btn{ display: none; }
+@media (max-width: 640px){
+  .composer{ gap: 8px; position: relative; }
+  .composer__field{ gap: 8px; padding: 5px 8px 5px 10px; min-width: 0; }
+  .composer__mic, .composer__attach{ width: 32px; height: 32px; border-radius: 9px; font-size: 14px; flex-shrink: 0; }
+  .composer__send{ flex-shrink: 0; }
   .composer__send span{ display: none; }
   .composer__send{ padding: 9px 11px; }
   .composer__prefix, .composer__count{ display: none; }
+  .composer__more-btn{ display: grid; }
+  .composer__extras{
+    display: none;
+    position: absolute;
+    right: 12px;
+    bottom: calc(100% + 8px);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 8px;
+    gap: 8px;
+    z-index: 6;
+  }
+  .composer.open-more .composer__extras{ display: flex; }
+  .composer__extras .composer__mic{ width: 42px; height: 42px; font-size: 16px; border-radius: 12px; }
+  .composer.open-more .composer__more-btn{
+    color: var(--accent);
+    border-color: rgba(255,90,60,0.45);
+    background: rgba(255,90,60,0.1);
+  }
+}
+/* Small phones (320-400px): tighten further */
+@media (max-width: 400px){
+  .composer{ padding: 10px 10px 8px; gap: 6px; }
   .composer__field{ gap: 6px; }
   .composer__mic, .composer__attach{ width: 30px; height: 30px; }
   .chat__title p{ display: none; }
@@ -966,5 +992,122 @@ html[data-theme="sunset"]{
     margin: 0 auto;
     border-left: 1px solid var(--line-soft);
     border-right: 1px solid var(--line-soft);
+  }
+}
+
+/* ============ Screenshot / screen-record deterrents (best-effort) ============ */
+/* NOTE: no website can truly block OS-level screenshots or OBS-style capture.
+   This layer deters casual capture: no-select, no print, blur-on-background,
+   PrintScreen flash-blank, right-click block, and a tracing watermark. */
+.messages,
+.message__body,
+.message__image-caption,
+.user-list{
+  user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+}
+.message__image,
+.image-preview img{
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: auto;
+}
+.chat__scroll{
+  -webkit-touch-callout: none;
+}
+
+/* Tracing watermark: repeated username + time, pointer-transparent */
+.watermark{
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0.07;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1;
+  white-space: pre;
+}
+.watermark__tile{
+  position: absolute;
+  transform: rotate(-24deg);
+  white-space: nowrap;
+}
+
+/* Full-app blank shield. Shown on PrintScreen / window blur / print. */
+.privacy-shield{
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: #05080d;
+  padding: 24px;
+  text-align: center;
+}
+body.privacy-hide .privacy-shield{ display: flex; }
+body.privacy-hide .app{ visibility: hidden; }
+.privacy-shield__card{
+  max-width: 360px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 28px 24px;
+}
+.privacy-shield__icon{ font-size: 32px; }
+.privacy-shield__title{
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 17px;
+  margin: 10px 0 8px;
+}
+.privacy-shield__desc{
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.privacy-toast{
+  position: fixed;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%) translateY(8px);
+  z-index: 90;
+  background: rgba(11,15,22,0.96);
+  border: 1px solid rgba(255,176,32,0.45);
+  color: var(--accent-amber);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  max-width: min(420px, calc(100vw - 32px));
+  text-align: center;
+}
+.privacy-toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+#shield-btn.shield-off{ opacity: 0.45; filter: grayscale(1); }
+
+/* Block printing / save-to-PDF (a screenshot equivalent) */
+@media print{
+  body *{ visibility: hidden !important; }
+  body::after{
+    content: "Printing is disabled for this private chat.";
+    visibility: visible !important;
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-family: monospace;
+    font-size: 16px;
+    color: #000;
+    background: #fff;
   }
 }
