@@ -3,13 +3,13 @@
  * chat, presence and typing behave exactly like the website.
  * Bump CACHE below whenever the shell (html/css/js) changes.
  */
-const CACHE = 'signal-shell-v1.7.0';
+const CACHE = 'signal-shell-v1.7.1';
 const SHELL_URLS = [
   '/',
   '/index.html',
   '/style.css',
-  '/qr.js?v=1.7.0',
-  '/main.js?v=1.7.0',
+  '/qr.js?v=1.7.1',
+  '/main.js?v=1.7.1',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

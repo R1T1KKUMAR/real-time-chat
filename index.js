@@ -25,7 +25,7 @@ const MAX_HISTORY = 100;
 // 30s tolerates short backgrounding; anything longer means the phone slept
 // and "left" is the honest presence state (same as WhatsApp "last seen").
 const LEAVE_GRACE_MS = 30000;
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const sessions = new Map(); // sessionId -> { id, createdAt, users: Map<socketId,{username,joinedAt}>, usernames:Set<lower>, history:[], pendingLeaves:Map<lower,{timeout,oldSocketId,username}> }
 
 function generateSessionId() {

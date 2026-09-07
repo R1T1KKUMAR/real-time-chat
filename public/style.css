@@ -806,7 +806,7 @@ body{
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 24px;
-  max-width: 340px; width: 100%;
+  max-width: min(340px, calc(100vw - 36px)); width: 100%;
   text-align: center;
   box-shadow: var(--shadow);
 }
@@ -896,3 +896,75 @@ html[data-theme="sunset"]{
   background: var(--surface-3); border: 1px solid var(--line); color: var(--text);
 }
 .file-chip__dl:hover{ color: var(--accent-2); border-color: rgba(46,196,182,0.4); }
+
+/* ============ Adaptive environment: every display size ============ */
+/* Notch / gesture-bar safe areas (appended last so they win ties) */
+.chat__header{
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+}
+.composer{ padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.overlay{
+  overflow-y: auto;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+.join-card{ margin: auto; }
+.sidebar{ padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+
+/* Long unbroken strings (links, fingerprints) must never force sideways scroll */
+.message__body, .message__image-caption, .file-chip__name, .modal__link{ overflow-wrap: anywhere; }
+.poll__label{ white-space: nowrap; }
+.poll, .file-chip, .voice-player{ min-width: 0; }
+
+/* Phones: header + title compaction */
+@media (max-width: 640px){
+  .chat__header{ gap: 10px; }
+  .chat__title{ min-width: 0; flex: 1; }
+  .chat__title h2{ font-size: 14px; }
+  .chat__meta{ gap: 6px; }
+  #latency-pill, #msg-count{ display: none; }
+  .join-card h2{ font-size: 24px; }
+}
+/* Phones: composer compaction (7 controls must fit 360px) */
+@media (max-width: 560px){
+  .composer{ gap: 8px; }
+  .composer__field{ gap: 8px; padding: 5px 8px 5px 10px; }
+  .composer__mic, .composer__attach{ width: 32px; height: 32px; border-radius: 9px; font-size: 14px; }
+  .composer__send{ padding: 9px 12px; }
+}
+/* Small phones (320-400px): icon-only send, essentials only */
+@media (max-width: 400px){
+  .composer__send span{ display: none; }
+  .composer__send{ padding: 9px 11px; }
+  .composer__prefix, .composer__count{ display: none; }
+  .composer__field{ gap: 6px; }
+  .composer__mic, .composer__attach{ width: 30px; height: 30px; }
+  .chat__title p{ display: none; }
+  .voice-player{ min-width: 0; }
+  .voice-player__wave{ min-width: 48px; }
+  .modal__card{ padding: 20px 16px; }
+}
+/* Touch devices: no hover — actions must always be visible + tappable */
+@media (pointer: coarse){
+  .message__actions{ opacity: 1; }
+  .mini-btn{ width: 32px; height: 32px; }
+  .poll__opt{ padding: 10px; }
+}
+/* Short landscape (rotated phones, squat windows): spend height on messages */
+@media (max-height: 500px) and (orientation: landscape){
+  .chat__header{ padding-top: 8px; padding-bottom: 8px; }
+  .chat__scroll{ padding: 12px 14px 8px; }
+  .composer{ padding-top: 8px; }
+  .chat__empty{ display: none; }
+  .overlay{ align-items: start; }
+}
+/* Ultrawide desktop: cap + center the chat column */
+@media (min-width: 1400px){
+  .chat{
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+    border-left: 1px solid var(--line-soft);
+    border-right: 1px solid var(--line-soft);
+  }
+}
