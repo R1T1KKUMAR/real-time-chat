@@ -1,4 +1,16 @@
-const socket = io();
+// Explicit reconnection policy for phones: backgrounding, screen lock and
+// WiFi↔mobile handoffs kill the transport constantly. Defaults would
+// eventually recover, but slowly and with no retry once an event is missed.
+const socket = io({
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 800,      // first retry fast (background return feels instant)
+  reconnectionDelayMax: 8000,  // …then back off instead of hammering the server
+  randomizationFactor: 0.5,
+  timeout: 15000,
+});
+let lastRejoinAttempt = 0;
+let rejoinFailed = false; // set when the server rejects a rejoin — stops auto-retry so manual entry isn't hijacked
 
 // Elements
 const overlay = document.getElementById('overlay');
@@ -318,6 +330,7 @@ function showSessionError(msg){ sessionError.textContent=msg||''; sessionInput.s
 })();
 
 async function attemptCreate(){
+  rejoinFailed = false;
   const u=usernameInput.value.trim();
   const uErr=validateUsername(u);
   if(uErr){ showJoinError(uErr); usernameInput.focus(); return; }
@@ -332,6 +345,7 @@ async function attemptCreate(){
   setTimeout(()=>{ createBtn.textContent='Create new session →'; createBtn.disabled=false; },1500);
 }
 function attemptJoin(){
+  rejoinFailed = false;
   const u=usernameInput.value.trim();
   const sid=sessionInput.value.trim().toUpperCase();
   const uErr=validateUsername(u);
@@ -754,6 +768,9 @@ function renderTyping(){
 
 // Auto-rejoin on connect if stored — URL ?session= takes priority over stored
 function tryAutoRejoin(){
+  if(joined && !needsRejoin) return; // already in the room, nothing to do
+  if(rejoinFailed) return; // server rejected us — wait for manual entry
+  lastRejoinAttempt = Date.now();
   const {user, sess:storedSess}=getStored();
   let urlSess='';
   try{ urlSess=new URLSearchParams(window.location.search).get('session')?.trim().toUpperCase()||''; }catch{}
@@ -791,16 +808,59 @@ socket.on('disconnect', (reason)=>{
 socket.on('connect_error', ()=>setConnection('offline','Connection failed — retrying…'));
 // Phone screen-lock / background tab kills the socket; when the user comes
 // back, reconnect immediately instead of waiting for socket.io backoff.
+function kickReconnect(){
+  if(!joined) return;
+  if(!socket.connected){ try{ socket.connect(); }catch{} }
+  // Belt & suspenders: if we are connected but still flagged out-of-room
+  // (join emit lost while frozen), re-ask for the room.
+  setTimeout(()=>{ if(!document.hidden && joined && needsRejoin && socket.connected) tryAutoRejoin(); }, 1000);
+}
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden || !joined) return;
-  if(!socket.connected){ try{ socket.connect(); }catch{} }
-  else if(needsRejoin){ tryAutoRejoin(); }
-  else maybeEmitSeen();
+  kickReconnect();
+  if(!needsRejoin) maybeEmitSeen();
 });
+// bfcache restores / radio wakes: visibility may not fire, these always do.
+window.addEventListener('pageshow', (e)=>{ if(joined && (e.persisted || !socket.connected)) kickReconnect(); });
+window.addEventListener('online', ()=>kickReconnect());
 window.addEventListener('focus', ()=>{ maybeEmitSeen(); });
+// Watchdog: a single missed event while frozen must never wedge the app.
+// Retries the transport AND the room join (throttled), skips background tabs.
+setInterval(()=>{
+  if(document.hidden || !joined) return;
+  if(!socket.connected){ try{ socket.connect(); }catch{} return; }
+  if(needsRejoin && Date.now() - lastRejoinAttempt > 5000) tryAutoRejoin();
+}, 4000);
+// Tap the connection pill to force a retry — escape hatch if all else fails.
+(function(){
+  const conn = document.querySelector('.conn');
+  if(!conn) return;
+  conn.style.cursor = 'pointer';
+  conn.title = 'Tap to reconnect';
+  conn.addEventListener('click', ()=>kickReconnect());
+})();
 
-socket.on('username error', (msg)=>{ showJoinError(msg); const s=getStored(); if(s.user && msg.includes('already taken')){ /* keep session, let user pick new name */ }});
-socket.on('session error', (msg)=>{ showSessionError(msg); sessionError.style.color='#F87171'; });
+socket.on('username error', (msg)=>{
+  showJoinError(msg);
+  if(joined && overlay.classList.contains('hidden')) returnToEntry(msg);
+});
+socket.on('session error', (msg)=>{
+  showSessionError(msg); sessionError.style.color='#F87171';
+  // Rejoin failed while we were away (server restarted / room expired).
+  // Previously this wrote into the hidden overlay and the chat looked
+  // dead-but-connected forever. Bring the entry screen back instead.
+  if(joined && overlay.classList.contains('hidden')) returnToEntry(msg);
+});
+// Drop back to the entry screen with the error visible so the user can
+// create/join again instead of staring at a dead room.
+function returnToEntry(msg){
+  joined = false;
+  rejoinFailed = true;
+  overlay.classList.remove('hidden');
+  if(msg) formHint.textContent = msg;
+  addSystemMessage(msg || 'Disconnected — please join again', '');
+  try{ usernameInput.focus(); }catch{}
+}
 socket.on('session created', ({sessionId:sid})=>{
   setSessionUI(sid);
   // plant the room key in the URL hash (never sent to the server) so the
@@ -885,6 +945,7 @@ socket.on('joined', async (data)=>{
   setSessionUI(data.sessionId);
   joined=true;
   needsRejoin=false;
+  rejoinFailed=false;
   // fresh receipt state for this room view
   msgOrder.length=0; msgCache.clear(); lastSeenSent=''; lastSeenEmit=0;
   saveSession();
@@ -1334,13 +1395,14 @@ function updateWatermark(){
   if(!joined || !username) return;
   const tag = `${username} • ${sessionId} • ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
   const frag = document.createDocumentFragment();
-  // tile across the viewport; rotated via CSS
-  for(let y = -40; y < window.innerHeight + 100; y += 130){
-    for(let x = -120; x < window.innerWidth + 100; x += 260){
+  // tile sparsely across the viewport; rotated via CSS. Deliberately faint —
+  // dense tiles hurt readability and users hate them.
+  for(let y = -40; y < window.innerHeight + 100; y += 190){
+    for(let x = -120; x < window.innerWidth + 100; x += 380){
       const s = document.createElement('span');
       s.className = 'watermark__tile';
       s.style.left = `${x}px`;
-      s.style.top = `${y + ((x / 260) % 2 ? 40 : 0)}px`;
+      s.style.top = `${y + ((x / 380) % 2 ? 50 : 0)}px`;
       s.textContent = tag;
       frag.appendChild(s);
     }

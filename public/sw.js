@@ -5,7 +5,7 @@
  * BUMP THIS together with the ?v= query in index.html whenever the shell
  * (html/css/js) changes, otherwise Android keeps the old shell.
  */
-const CACHE = 'signal-shell-v1.7.3';
+const CACHE = 'signal-shell-v1.7.5';
 // NOTE: unversioned paths on purpose — the fetch handler matches with
 // ignoreSearch so ?v= cache-busters still hit the cache.
 const SHELL_URLS = [
